@@ -219,6 +219,170 @@ div.stButton > button {{
     border-radius: 8px;
     font-weight: 600;
 }}
+
+/* ===== Visual refresh: clean blue technology dashboard ===== */
+:root {{
+    --ui-ink: #172554;
+    --ui-muted: #64748b;
+    --ui-blue: #2563eb;
+    --ui-cyan: #0891b2;
+    --ui-line: #dbeafe;
+    --ui-surface: #ffffff;
+}}
+.stApp {{
+    background:
+      radial-gradient(ellipse at 8% 0%, rgba(219,234,254,.72), transparent 34%),
+      radial-gradient(ellipse at 92% 8%, rgba(207,250,254,.58), transparent 30%),
+      #f6f9ff;
+    color: var(--ui-ink);
+}}
+[data-testid="stAppViewContainer"] > .main {{ background: transparent; }}
+.block-container {{
+    max-width: 1240px;
+    padding-top: 2.2rem;
+    padding-bottom: 3.5rem;
+}}
+.editorial-header {{
+    position: relative;
+    overflow: hidden;
+    padding: 1.8rem 2rem;
+    border: 1px solid rgba(191,219,254,.9);
+    border-radius: 22px;
+    background: linear-gradient(115deg, #eff6ff 0%, #ffffff 52%, #ecfeff 100%);
+    box-shadow: 0 14px 36px rgba(30,64,175,.08);
+    margin-bottom: 1.8rem;
+}}
+.editorial-header:after {{
+    content: "";
+    position: absolute;
+    width: 230px; height: 230px;
+    right: 8%; top: -145px;
+    border-radius: 50%;
+    background: rgba(59,130,246,.08);
+    pointer-events: none;
+}}
+.editorial-kicker {{
+    color: #2563eb;
+    letter-spacing: .13em;
+    font-size: .72rem;
+    font-weight: 800;
+}}
+.editorial-title {{
+    color: #172554;
+    font-size: clamp(1.65rem, 3vw, 2.25rem);
+    font-weight: 800;
+    letter-spacing: -.045em;
+}}
+.editorial-subtitle {{ color: #52627d; max-width: 700px; }}
+.section-heading {{
+    padding: .45rem 0 .65rem;
+    border-bottom: 1px solid #e2e8f0;
+    margin: .45rem 0 .65rem;
+}}
+.section-heading h3, .section-heading h4 {{ color: #172554; }}
+.result-panel, .blueprint-box {{
+    background: #fff;
+    border: 1px solid #dbeafe;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(30,64,175,.055);
+    padding: 1.15rem 1.25rem;
+}}
+.result-heading {{ color: #172554; }}
+.result-copy {{ color: #64748b; }}
+.tier-tag {{ border-radius: 999px; padding: .32rem .75rem; }}
+[data-testid="stSidebar"] {{
+    background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 55%, #ecfeff 100%);
+    border-right: 1px solid #dbeafe;
+}}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li {{
+    color: #334155;
+}}
+.sidebar-brand {{ border-bottom-color: #cbdffb; }}
+div[data-testid="stTabs"] > div[role="tablist"] {{
+    gap: .55rem;
+    border-bottom: 1px solid #dbeafe;
+}}
+div[data-testid="stTabs"] button[role="tab"] {{
+    border: 1px solid transparent;
+    border-radius: 11px 11px 0 0;
+    padding: .65rem 1.1rem;
+    color: #64748b;
+    font-weight: 700;
+}}
+div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {{
+    color: #1d4ed8;
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    border-bottom-color: #eff6ff;
+}}
+.stButton > button, .stDownloadButton > button {{
+    border-radius: 10px;
+    border: 1px solid #bfdbfe;
+    font-weight: 700;
+    transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+}}
+.stButton > button:hover, .stDownloadButton > button:hover {{
+    border-color: #60a5fa;
+    color: #1d4ed8;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(37,99,235,.12);
+}}
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {{
+    background: linear-gradient(110deg, #2563eb, #0891b2);
+    color: white;
+    border: 0;
+}}
+[data-testid="stNumberInput"] input {{
+    border-radius: 10px;
+    border-color: #cbd5e1;
+    background: #fff;
+    color: #172554;
+}}
+[data-testid="stNumberInput"] button,
+[data-testid="stWidgetLabel"] p,
+[data-testid="stCaptionContainer"],
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stFileUploader"] section,
+div[data-testid="stExpander"] summary {{
+    color: #172554;
+}}
+[data-testid="stNumberInput"] input:focus {{
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59,130,246,.15);
+}}
+[data-testid="stFileUploader"] section {{
+    border: 1.5px dashed #93c5fd;
+    border-radius: 14px;
+    background: rgba(239,246,255,.72);
+}}
+[data-testid="stMetric"] {{
+    background: #fff;
+    border: 1px solid #dbeafe;
+    border-radius: 14px;
+    padding: .9rem 1rem;
+    box-shadow: 0 5px 16px rgba(30,64,175,.045);
+}}
+[data-testid="stMetricLabel"] {{ color: #64748b; font-weight: 650; }}
+[data-testid="stMetricValue"] {{ color: #1d4ed8; font-weight: 800; }}
+[data-testid="stDataFrame"] {{
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    overflow: hidden;
+}}
+div[data-testid="stExpander"] {{
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: rgba(255,255,255,.75);
+}}
+hr {{ border-color: #dbeafe; }}
+@media (max-width: 700px) {{
+    .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
+    .editorial-header {{ padding: 1.25rem; }}
+    .editorial-header svg {{ width: 118px; }}
+}}
+
 </style>
         """,
         unsafe_allow_html=True,
