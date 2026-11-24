@@ -1,3 +1,11 @@
+"""
+Klasifikasi Rentang Harga Ponsel - Random Forest (4 fitur)
+Proyek UAS Pengenalan Pola, Kelompok 3 - Departemen Sistem Komputer, Universitas Sriwijaya
+
+Cara menjalankan:  streamlit run app.py
+Berkas model (random_forest_mobile_price_4fitur.pkl) harus berada satu folder dengan app.py.
+"""
+
 from pathlib import Path
 from typing import Any
 
@@ -6,869 +14,717 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-MODEL_PATH = Path(__file__).resolve().parent / "random_forest_mobile_price_4fitur.pkl"
+# --------------------------------------------------------------------------- #
+# Konfigurasi data & model
+# --------------------------------------------------------------------------- #
+MODEL_FILENAME = "random_forest_mobile_price_4fitur.pkl"
+MODEL_DIR = Path(__file__).resolve().parent
 
 FEATURE_COLUMNS = ["ram", "battery_power", "px_width", "px_height"]
 
-FEATURE_SPECS = {
+# Rentang slider dibulatkan dari rentang data latih (lihat Tabel 4.1 laporan):
+# ram 256-3.998, battery_power 501-1.998, px_width 500-1.998, px_height 0-1.960.
+# Nilai di luar rentang ini tidak pernah dilihat model saat pelatihan.
+SPECS = {
     "ram": {
-        "label": "Kapasitas RAM (MB)",
-        "min": 256,
-        "max": 16384,
-        "default": 2048,
-        "step": 128,
-        "help": "Kapasitas memori RAM ponsel dalam satuan Megabyte (256–16384 MB).",
+        "label": "RAM", "unit": "MB", "min": 256, "max": 4000, "step": 32, "default": 2048,
+        "help": "Kapasitas RAM dalam megabyte. Rentang data latih: 256-3.998 MB.",
     },
     "battery_power": {
-        "label": "Kapasitas Baterai (mAh)",
-        "min": 500,
-        "max": 6000,
-        "default": 1500,
-        "step": 100,
-        "help": "Daya tampung baterai ponsel dalam satuan mAh (500–6000 mAh).",
+        "label": "Kapasitas baterai", "unit": "mAh", "min": 500, "max": 2000, "step": 10, "default": 1250,
+        "help": "Kapasitas baterai dalam mAh. Rentang data latih: 501-1.998 mAh.",
     },
     "px_width": {
-        "label": "Lebar Resolusi Layar (piksel)",
-        "min": 500,
-        "max": 4000,
-        "default": 1280,
-        "step": 10,
-        "help": "Jumlah piksel horizontal pada layar ponsel (500–4000 piksel).",
+        "label": "Lebar resolusi layar", "unit": "px", "min": 500, "max": 2000, "step": 10, "default": 1250,
+        "help": "Jumlah piksel horizontal. Rentang data latih: 500-1.998 piksel.",
     },
     "px_height": {
-        "label": "Tinggi Resolusi Layar (piksel)",
-        "min": 0,
-        "max": 4000,
-        "default": 720,
-        "step": 10,
-        "help": "Jumlah piksel vertikal pada layar ponsel (0–4000 piksel).",
+        "label": "Tinggi resolusi layar", "unit": "px", "min": 0, "max": 2000, "step": 10, "default": 650,
+        "help": "Jumlah piksel vertikal. Rentang data latih: 0-1.960 piksel.",
     },
 }
 
-CLASS_LABELS = {
-    0: "Low Cost (Entry-Level)",
-    1: "Medium Cost (Mid-Range)",
-    2: "High Cost (Upper Mid-Range)",
-    3: "Very High Cost (Flagship)",
-}
+# Bobot fitur model 20 fitur (tuning pertama) pada Tabel 4.3 laporan, sebagai pembanding.
+REPORT_IMPORTANCE_20 = {"ram": 53.03, "battery_power": 7.36, "px_width": 5.44, "px_height": 5.24}
 
-CLASS_DESCRIPTIONS = {
-    0: "Ponsel kelas pemula dengan spesifikasi dasar untuk kebutuhan harian ringan.",
-    1: "Ponsel kelas menengah dengan performa seimbang untuk penggunaan sehari-hari.",
-    2: "Ponsel kelas menengah atas dengan RAM besar dan layar beresolusi tinggi.",
-    3: "Ponsel kelas unggulan (flagship) dengan spesifikasi tinggi di seluruh aspek.",
-}
+# Angka dari laporan (bersifat eksploratif, lihat subbab 4.10 dan 4.11).
+REPORT_METRICS = [
+    ("94%", "Akurasi data uji", "model 4 fitur, 400 data uji"),
+    ("0,9056", "F1-macro cross-validation", "5 lipatan, std 0,0262"),
+    ("2.000", "Data pelatihan model final", "20 fitur asli, 4 dipakai"),
+]
 
-CLASS_STYLES = {
-    0: {"accent": "#64748B", "tint": "rgba(100, 116, 139, 0.12)", "tag": "Kelas 0 • Entry-Level"},
-    1: {"accent": "#0D9488", "tint": "rgba(13, 148, 136, 0.12)", "tag": "Kelas 1 • Mid-Range"},
-    2: {"accent": "#2563EB", "tint": "rgba(37, 99, 235, 0.12)", "tag": "Kelas 2 • Upper Mid-Range"},
-    3: {"accent": "#D97706", "tint": "rgba(217, 119, 6, 0.14)", "tag": "Kelas 3 • Flagship"},
+CLASSES = {
+    0: {"name": "Entry-Level", "full": "Low Cost (Entry-Level)", "color": "#14b8a6", "tint": "rgba(20,184,166,.12)",
+        "desc": "Ponsel kelas pemula dengan spesifikasi dasar untuk kebutuhan harian yang ringan."},
+    1: {"name": "Mid-Range", "full": "Medium Cost (Mid-Range)", "color": "#3b82f6", "tint": "rgba(59,130,246,.12)",
+        "desc": "Ponsel kelas menengah dengan performa seimbang untuk pemakaian sehari-hari."},
+    2: {"name": "Upper Mid-Range", "full": "High Cost (Upper Mid-Range)", "color": "#8b5cf6", "tint": "rgba(139,92,246,.12)",
+        "desc": "Ponsel menengah atas dengan RAM besar dan layar beresolusi tinggi."},
+    3: {"name": "Flagship", "full": "Very High Cost (Flagship)", "color": "#f59e0b", "tint": "rgba(245,158,11,.14)",
+        "desc": "Ponsel unggulan dengan spesifikasi tinggi di hampir semua aspek."},
 }
 
 PRESETS = {
-    "entry": {
-        "button_label": "Contoh HP Entry-Level",
-        "values": {"ram": 512, "battery_power": 900, "px_width": 720, "px_height": 480},
-    },
-    "mid": {
-        "button_label": "Contoh HP Mid-Range",
-        "values": {"ram": 1536, "battery_power": 1400, "px_width": 1280, "px_height": 720},
-    },
-    "flagship": {
-        "button_label": "Contoh HP Flagship",
-        "values": {"ram": 8192, "battery_power": 5000, "px_width": 2400, "px_height": 1080},
-    },
+    0: {"label": "🌱 Entry-Level", "values": {"ram": 512, "battery_power": 900, "px_width": 720, "px_height": 480}},
+    1: {"label": "⚡ Mid-Range", "values": {"ram": 1536, "battery_power": 1400, "px_width": 1280, "px_height": 720}},
+    2: {"label": "🔥 Upper Mid-Range", "values": {"ram": 2496, "battery_power": 1400, "px_width": 1200, "px_height": 700}},
+    3: {"label": "👑 Flagship", "values": {"ram": 3488, "battery_power": 1800, "px_width": 1700, "px_height": 1200}},
 }
 
-FONT_STACK = "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+FONT = "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 
 
-def inject_theme_styles() -> None:
-    """Load Plus Jakarta Sans font and clean editorial styles compatible with light/dark mode."""
-    st.markdown(
-        f"""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-
-html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {{
-    font-family: {FONT_STACK};
-}}
-
-.stApp h1, .stApp h2, .stApp h3, .stApp h4,
-.stApp p, .stApp label, .stApp input, .stApp button,
-.stApp [data-testid="stMarkdownContainer"] {{
-    font-family: {FONT_STACK};
-}}
-
-/* Preserve Streamlit's Material icon font so built-in UI icons render properly */
-[data-testid="stIconMaterial"], .material-symbols-rounded, .material-icons {{
-    font-family: "Material Symbols Rounded", "Material Icons" !important;
-}}
-
-.block-container {{
-    padding-top: 1.75rem;
-    padding-bottom: 2.5rem;
-    max-width: 1120px;
-}}
-
-.editorial-header {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    padding: 0 0 1.25rem 0;
-    border-bottom: 1px solid rgba(128, 128, 128, 0.22);
-    margin-bottom: 1.25rem;
-}}
-
-.editorial-kicker {{
-    font-size: 0.78rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    opacity: 0.65;
-    margin-bottom: 0.35rem;
-}}
-
-.editorial-title {{
-    margin: 0 0 0.4rem 0;
-    font-size: 1.9rem;
-    font-weight: 700;
-    letter-spacing: -0.025em;
-    line-height: 1.2;
-}}
-
-.editorial-subtitle {{
-    margin: 0;
-    font-size: 0.95rem;
-    opacity: 0.8;
-    line-height: 1.55;
-    max-width: 660px;
-}}
-
-.section-heading {{
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    margin: 0.2rem 0 0.25rem 0;
-}}
-
-.section-heading h3, .section-heading h4 {{
-    margin: 0;
-    font-weight: 700;
-    letter-spacing: -0.015em;
-}}
-
-.result-panel {{
-    background: var(--secondary-background-color);
-    border: 1px solid rgba(128, 128, 128, 0.2);
-    border-radius: 12px;
-    padding: 1.15rem 1.25rem;
-    margin-bottom: 0.85rem;
-}}
-
-.result-panel-inner {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-}}
-
-.tier-tag {{
-    display: inline-block;
-    font-size: 0.74rem;
-    font-weight: 700;
-    padding: 0.2rem 0.6rem;
-    border-radius: 6px;
-    margin-bottom: 0.45rem;
-}}
-
-.result-heading {{
-    margin: 0 0 0.3rem 0;
-    font-size: 1.28rem;
-    font-weight: 700;
-    letter-spacing: -0.015em;
-    line-height: 1.3;
-}}
-
-.result-copy {{
-    margin: 0;
-    font-size: 0.9rem;
-    opacity: 0.8;
-    line-height: 1.5;
-}}
-
-.blueprint-box {{
-    background: var(--secondary-background-color);
-    border: 1px solid rgba(128, 128, 128, 0.2);
-    border-radius: 12px;
-    padding: 0.85rem 1rem;
-}}
-
-.sidebar-brand {{
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding-bottom: 0.85rem;
-    border-bottom: 1px solid rgba(128, 128, 128, 0.2);
-    margin-bottom: 0.85rem;
-}}
-
-div.stButton > button {{
-    border-radius: 8px;
-    font-weight: 600;
-}}
-
-/* ===== Visual refresh: clean blue technology dashboard ===== */
-:root {{
-    --ui-ink: #172554;
-    --ui-muted: #64748b;
-    --ui-blue: #2563eb;
-    --ui-cyan: #0891b2;
-    --ui-line: #dbeafe;
-    --ui-surface: #ffffff;
-}}
-.stApp {{
-    background:
-      radial-gradient(ellipse at 8% 0%, rgba(219,234,254,.72), transparent 34%),
-      radial-gradient(ellipse at 92% 8%, rgba(207,250,254,.58), transparent 30%),
-      #f6f9ff;
-    color: var(--ui-ink);
-}}
-[data-testid="stAppViewContainer"] > .main {{ background: transparent; }}
-.block-container {{
-    max-width: 1240px;
-    padding-top: 2.2rem;
-    padding-bottom: 3.5rem;
-}}
-.editorial-header {{
-    position: relative;
-    overflow: hidden;
-    padding: 1.8rem 2rem;
-    border: 1px solid rgba(191,219,254,.9);
-    border-radius: 22px;
-    background: linear-gradient(115deg, #eff6ff 0%, #ffffff 52%, #ecfeff 100%);
-    box-shadow: 0 14px 36px rgba(30,64,175,.08);
-    margin-bottom: 1.8rem;
-}}
-.editorial-header:after {{
-    content: "";
-    position: absolute;
-    width: 230px; height: 230px;
-    right: 8%; top: -145px;
-    border-radius: 50%;
-    background: rgba(59,130,246,.08);
-    pointer-events: none;
-}}
-.editorial-kicker {{
-    color: #2563eb;
-    letter-spacing: .13em;
-    font-size: .72rem;
-    font-weight: 800;
-}}
-.editorial-title {{
-    color: #172554;
-    font-size: clamp(1.65rem, 3vw, 2.25rem);
-    font-weight: 800;
-    letter-spacing: -.045em;
-}}
-.editorial-subtitle {{ color: #52627d; max-width: 700px; }}
-.section-heading {{
-    padding: .45rem 0 .65rem;
-    border-bottom: 1px solid #e2e8f0;
-    margin: .45rem 0 .65rem;
-}}
-.section-heading h3, .section-heading h4 {{ color: #172554; }}
-.result-panel, .blueprint-box {{
-    background: #fff;
-    border: 1px solid #dbeafe;
-    border-radius: 16px;
-    box-shadow: 0 8px 24px rgba(30,64,175,.055);
-    padding: 1.15rem 1.25rem;
-}}
-.result-heading {{ color: #172554; }}
-.result-copy {{ color: #64748b; }}
-.tier-tag {{ border-radius: 999px; padding: .32rem .75rem; }}
-[data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 55%, #ecfeff 100%);
-    border-right: 1px solid #dbeafe;
-}}
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li {{
-    color: #334155;
-}}
-.sidebar-brand {{ border-bottom-color: #cbdffb; }}
-div[data-testid="stTabs"] > div[role="tablist"] {{
-    gap: .55rem;
-    border-bottom: 1px solid #dbeafe;
-}}
-div[data-testid="stTabs"] button[role="tab"] {{
-    border: 1px solid transparent;
-    border-radius: 11px 11px 0 0;
-    padding: .65rem 1.1rem;
-    color: #64748b;
-    font-weight: 700;
-}}
-div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {{
-    color: #1d4ed8;
-    background: #eff6ff;
-    border-color: #bfdbfe;
-    border-bottom-color: #eff6ff;
-}}
-.stButton > button, .stDownloadButton > button {{
-    border-radius: 10px;
-    border: 1px solid #bfdbfe;
-    font-weight: 700;
-    transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
-}}
-.stButton > button:hover, .stDownloadButton > button:hover {{
-    border-color: #60a5fa;
-    color: #1d4ed8;
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(37,99,235,.12);
-}}
-.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {{
-    background: linear-gradient(110deg, #2563eb, #0891b2);
-    color: white;
-    border: 0;
-}}
-[data-testid="stNumberInput"] input {{
-    border-radius: 10px;
-    border-color: #cbd5e1;
-    background: #fff;
-    color: #172554;
-}}
-[data-testid="stNumberInput"] button,
-[data-testid="stWidgetLabel"] p,
-[data-testid="stCaptionContainer"],
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3,
-[data-testid="stFileUploader"] section,
-div[data-testid="stExpander"] summary {{
-    color: #172554;
-}}
-[data-testid="stNumberInput"] input:focus {{
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59,130,246,.15);
-}}
-[data-testid="stFileUploader"] section {{
-    border: 1.5px dashed #93c5fd;
-    border-radius: 14px;
-    background: rgba(239,246,255,.72);
-}}
-[data-testid="stMetric"] {{
-    background: #fff;
-    border: 1px solid #dbeafe;
-    border-radius: 14px;
-    padding: .9rem 1rem;
-    box-shadow: 0 5px 16px rgba(30,64,175,.045);
-}}
-[data-testid="stMetricLabel"] {{ color: #64748b; font-weight: 650; }}
-[data-testid="stMetricValue"] {{ color: #1d4ed8; font-weight: 800; }}
-[data-testid="stDataFrame"] {{
-    border: 1px solid #dbeafe;
-    border-radius: 12px;
-    overflow: hidden;
-}}
-div[data-testid="stExpander"] {{
-    border: 1px solid #dbeafe;
-    border-radius: 12px;
-    background: rgba(255,255,255,.75);
-}}
-hr {{ border-color: #dbeafe; }}
-@media (max-width: 700px) {{
-    .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
-    .editorial-header {{ padding: 1.25rem; }}
-    .editorial-header svg {{ width: 118px; }}
-}}
-
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
+# --------------------------------------------------------------------------- #
+# Fungsi bantu
+# --------------------------------------------------------------------------- #
+def fmt_int(n: float) -> str:
+    return f"{int(round(n)):,}".replace(",", ".")
 
 
-def svg_header_schematic() -> str:
-    """Return a clean minimalist hardware-classifier SVG schematic."""
-    return f"""
-<div class="editorial-header">
-  <div style="flex: 1; min-width: 240px;">
-    <div class="editorial-kicker">Proyek Akhir Pengenalan Pola</div>
-    <h1 class="editorial-title">Klasifikasi Rentang Harga Ponsel</h1>
-    <p class="editorial-subtitle">
-      Prediksi segmen harga smartphone menggunakan <b>Random Forest Classifier</b>
-      dari 4 parameter perangkat keras utama: <code>ram</code>, <code>battery_power</code>,
-      <code>px_width</code>, dan <code>px_height</code>.
-    </p>
-  </div>
-  <div style="flex-shrink: 0;">
-    <svg width="164" height="92" viewBox="0 0 164 92" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Diagram Klasifikasi Ponsel">
-      <rect x="10" y="10" width="44" height="72" rx="8" stroke="currentColor" stroke-opacity="0.75" stroke-width="1.8"/>
-      <rect x="15" y="18" width="34" height="52" rx="3" stroke="currentColor" stroke-opacity="0.25" stroke-width="1.2"/>
-      <line x1="26" y1="14" x2="38" y2="14" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.8" stroke-linecap="round"/>
-      <rect x="20" y="48" width="5" height="16" rx="1.5" fill="#64748B"/>
-      <rect x="27" y="40" width="5" height="24" rx="1.5" fill="#0D9488"/>
-      <rect x="34" y="33" width="5" height="31" rx="1.5" fill="#2563EB"/>
-      <rect x="41" y="26" width="5" height="38" rx="1.5" fill="#D97706"/>
-      <path d="M58 46H78" stroke="currentColor" stroke-opacity="0.4" stroke-width="1.5" stroke-dasharray="3 3"/>
-      <circle cx="88" cy="24" r="4" stroke="currentColor" stroke-opacity="0.7" stroke-width="1.6"/>
-      <circle cx="88" cy="46" r="4" stroke="#2563EB" stroke-width="1.8"/>
-      <circle cx="88" cy="68" r="4" stroke="currentColor" stroke-opacity="0.7" stroke-width="1.6"/>
-      <path d="M92 24H108M92 46H108M92 68H108" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.4"/>
-      <rect x="110" y="16" width="44" height="16" rx="4" stroke="currentColor" stroke-opacity="0.28" stroke-width="1.2"/>
-      <text x="132" y="27" text-anchor="middle" fill="currentColor" opacity="0.82" font-size="8.5" font-weight="600" font-family="{FONT_STACK}">4 Fitur</text>
-      <rect x="110" y="38" width="44" height="16" rx="4" stroke="#2563EB" stroke-opacity="0.65" stroke-width="1.2"/>
-      <text x="132" y="49" text-anchor="middle" fill="#2563EB" font-size="8.5" font-weight="700" font-family="{FONT_STACK}">400 Tree</text>
-      <rect x="110" y="60" width="44" height="16" rx="4" stroke="currentColor" stroke-opacity="0.28" stroke-width="1.2"/>
-      <text x="132" y="71" text-anchor="middle" fill="currentColor" opacity="0.82" font-size="8.5" font-weight="600" font-family="{FONT_STACK}">4 Kelas</text>
-    </svg>
-  </div>
-</div>
-"""
+def fmt_dec(x: float, digits: int = 1) -> str:
+    return f"{x:.{digits}f}".replace(".", ",")
 
 
-def svg_icon(name: str, color: str = "currentColor") -> str:
-    """Return a clean 18x18 line SVG icon."""
-    icons = {
-        "sliders": f'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
-        "chart": f'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
-        "table": f'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
-        "check": f'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-    }
-    return icons.get(name, icons["sliders"])
-
-
-def svg_confidence_gauge(confidence: float, accent: str) -> str:
-    """Return a clean SVG ring gauge representing model confidence."""
-    radius = 32
-    circumference = 2 * np.pi * radius
-    clamped = max(0.0, min(100.0, confidence))
-    offset = circumference * (1.0 - clamped / 100.0)
-    return f"""
-<svg width="84" height="84" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg" aria-label="Skor Keyakinan">
-  <circle cx="42" cy="42" r="{radius}" fill="none" stroke="rgba(128, 128, 128, 0.2)" stroke-width="6.5"/>
-  <circle cx="42" cy="42" r="{radius}" fill="none" stroke="{accent}" stroke-width="6.5"
-          stroke-linecap="round" stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}"
-          transform="rotate(-90 42 42)"/>
-  <text x="42" y="40" text-anchor="middle" fill="currentColor" font-size="13.5" font-weight="700" font-family="{FONT_STACK}">{clamped:.1f}%</text>
-  <text x="42" y="53" text-anchor="middle" fill="currentColor" opacity="0.6" font-size="8" font-weight="600" font-family="{FONT_STACK}">KEYAKINAN</text>
-</svg>
-"""
-
-
-def svg_phone_spec_blueprint(
-    ram: int, battery_power: int, px_width: int, px_height: int, pred_class: int
-) -> str:
-    """Return a minimalist technical smartphone spec blueprint SVG."""
-    style = CLASS_STYLES[pred_class]
-    accent = style["accent"]
-    megapixels = (px_width * px_height) / 1_000_000
-    segments = "".join(
-        f'<rect x="{118 + idx * 46}" y="128" width="40" height="7" rx="3.5" '
-        f'fill="{accent if idx <= pred_class else "rgba(128, 128, 128, 0.22)"}"/>'
-        for idx in range(4)
-    )
-    return f"""
-<div class="blueprint-box">
-  <svg width="100%" viewBox="0 0 316 148" xmlns="http://www.w3.org/2000/svg" aria-label="Spesifikasi Ponsel">
-    <rect x="14" y="10" width="78" height="128" rx="12" fill="none" stroke="currentColor" stroke-opacity="0.7" stroke-width="2"/>
-    <rect x="21" y="21" width="64" height="104" rx="6" fill="{style['tint']}" stroke="{accent}" stroke-width="1.2"/>
-    <line x1="43" y1="15.5" x2="63" y2="15.5" stroke="currentColor" stroke-opacity="0.4" stroke-width="2" stroke-linecap="round"/>
-    <text x="53" y="45" text-anchor="middle" fill="{accent}" font-size="10" font-weight="700" font-family="{FONT_STACK}">KELAS {pred_class}</text>
-    <line x1="31" y1="54" x2="75" y2="54" stroke="{accent}" stroke-opacity="0.3" stroke-width="1"/>
-    <text x="53" y="72" text-anchor="middle" fill="currentColor" font-size="9.5" font-weight="700" font-family="{FONT_STACK}">{ram} MB</text>
-    <text x="53" y="83" text-anchor="middle" fill="currentColor" opacity="0.6" font-size="7.5" font-family="{FONT_STACK}">RAM</text>
-    <text x="53" y="103" text-anchor="middle" fill="currentColor" font-size="9.5" font-weight="700" font-family="{FONT_STACK}">{battery_power} mAh</text>
-    <text x="53" y="114" text-anchor="middle" fill="currentColor" opacity="0.6" font-size="7.5" font-family="{FONT_STACK}">BATERAI</text>
-
-    <text x="118" y="25" fill="currentColor" font-size="11" font-weight="700" font-family="{FONT_STACK}">Ringkasan Spesifikasi Input</text>
-    <text x="118" y="47" fill="currentColor" opacity="0.8" font-size="10" font-family="{FONT_STACK}">Memori RAM: {ram:,} MB ({ram / 1024:.2f} GB)</text>
-    <text x="118" y="66" fill="currentColor" opacity="0.8" font-size="10" font-family="{FONT_STACK}">Baterai: {battery_power:,} mAh</text>
-    <text x="118" y="85" fill="currentColor" opacity="0.8" font-size="10" font-family="{FONT_STACK}">Resolusi: {px_width} × {px_height} px ({megapixels:.2f} MP)</text>
-    <text x="118" y="116" fill="{accent}" font-size="9.5" font-weight="700" font-family="{FONT_STACK}">Posisi Segmen Harga ({pred_class + 1} dari 4)</text>
-    {segments}
-  </svg>
-</div>
-"""
-
-
-@st.cache_resource
-def load_model_bundle(model_path: Path) -> tuple[Any, list[str]]:
-    """Load the serialized RandomForest model and feature list from disk."""
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"File model tidak ditemukan di: {model_path}. "
-            "Pastikan 'random_forest_mobile_price_4fitur.pkl' berada di direktori utama."
-        )
-
-    loaded = joblib.load(model_path)
+def load_model_bundle_uncached() -> tuple[Any, list[str]]:
+    path = MODEL_DIR / MODEL_FILENAME
+    if not path.exists():
+        matches = sorted(MODEL_DIR.glob("random_forest_mobile_price_4fitur*.pkl"))
+        if not matches:
+            raise FileNotFoundError(
+                f"Berkas model '{MODEL_FILENAME}' tidak ditemukan di {MODEL_DIR}. "
+                "Letakkan berkas .pkl satu folder dengan app.py."
+            )
+        path = matches[0]
+    loaded = joblib.load(path)
     if isinstance(loaded, dict) and "model" in loaded:
         model = loaded["model"]
         features = list(loaded.get("fitur", FEATURE_COLUMNS))
     else:
         model = loaded
         features = list(getattr(model, "feature_names_in_", FEATURE_COLUMNS))
-
     return model, features
 
 
+@st.cache_resource(show_spinner="Memuat model...")
+def load_model_bundle() -> tuple[Any, list[str]]:
+    return load_model_bundle_uncached()
+
+
+def predict_proba_ordered(model: Any, df: pd.DataFrame) -> np.ndarray:
+    """Probabilitas dengan urutan kolom tetap kelas 0..3."""
+    raw = model.predict_proba(df)
+    classes = [int(c) for c in getattr(model, "classes_", [0, 1, 2, 3])]
+    out = np.zeros((len(df), 4))
+    for j, c in enumerate(classes):
+        out[:, c] = raw[:, j]
+    return out
+
+
 def init_session_state() -> None:
-    """Initialize default feature values in Streamlit session state."""
-    for feature, spec in FEATURE_SPECS.items():
-        if feature not in st.session_state:
-            st.session_state[feature] = spec["default"]
+    for key, spec in SPECS.items():
+        st.session_state.setdefault(key, spec["default"])
 
 
-def apply_preset(preset_key: str) -> None:
-    """Populate session state with preset smartphone specifications."""
-    for feature, value in PRESETS[preset_key]["values"].items():
-        st.session_state[feature] = value
+def apply_preset(class_id: int) -> None:
+    for key, value in PRESETS[class_id]["values"].items():
+        st.session_state[key] = value
 
 
-def render_sidebar(model: Any, features: list[str]) -> None:
-    """Render sidebar with clean SVG mark, model summary, and target class reference."""
-    with st.sidebar:
-        st.html(
-            f"""
-<div class="sidebar-brand">
-  <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1" y="1" width="34" height="34" rx="8" stroke="currentColor" stroke-opacity="0.22" stroke-width="1.2"/>
-    <circle cx="18" cy="10" r="2.8" fill="#2563EB"/>
-    <circle cx="10" cy="25" r="2.8" fill="#0D9488"/>
-    <circle cx="26" cy="25" r="2.8" fill="#D97706"/>
-    <path d="M16.5 12.5L11.5 22.5M19.5 12.5L24.5 22.5" stroke="currentColor" stroke-opacity="0.45" stroke-width="1.4" stroke-linecap="round"/>
-  </svg>
-  <div>
-    <div style="font-weight:700; font-size:0.96rem; font-family:{FONT_STACK};">Informasi Model</div>
-    <div style="font-size:0.78rem; opacity:0.7; font-family:{FONT_STACK};">Random Forest • 4 Fitur</div>
+# --------------------------------------------------------------------------- #
+# Gaya (CSS)
+# --------------------------------------------------------------------------- #
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+html, body, .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
+.stApp [data-testid="stMarkdownContainer"], .stApp [data-testid="stCaptionContainer"] {
+    font-family: __FONT__;
+}
+[data-testid="stIconMaterial"], .material-symbols-rounded, .material-icons {
+    font-family: "Material Symbols Rounded", "Material Icons" !important;
+}
+
+.stApp {
+    background:
+        radial-gradient(900px 500px at 0% -5%, rgba(196,181,253,.38), transparent 60%),
+        radial-gradient(800px 460px at 100% 0%, rgba(251,207,232,.42), transparent 55%),
+        #faf8ff;
+    color: #1e1b4b;
+}
+[data-testid="stHeader"] { background: transparent; }
+.block-container { max-width: 1180px; padding-top: 1.6rem; padding-bottom: 3rem; }
+
+/* ---------- hero ---------- */
+.hero {
+    position: relative; overflow: hidden; color: #fff;
+    border-radius: 28px; padding: 2.1rem 2.3rem; margin-bottom: 1.4rem;
+    background: linear-gradient(118deg, #4338ca 0%, #7c3aed 52%, #db2777 100%);
+    box-shadow: 0 22px 50px rgba(91,33,182,.28);
+    display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
+}
+.hero:before, .hero:after { content: ""; position: absolute; border-radius: 50%; pointer-events: none; }
+.hero:before { width: 340px; height: 340px; right: -90px; top: -150px; background: rgba(255,255,255,.10); }
+.hero:after  { width: 220px; height: 220px; left: 38%; bottom: -150px; background: rgba(255,255,255,.07); }
+.hero-text { position: relative; z-index: 1; max-width: 640px; }
+.hero-kicker { font-size: .72rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; opacity: .82; margin-bottom: .55rem; }
+.hero-title { margin: 0 0 .6rem 0; font-size: clamp(1.7rem, 3.2vw, 2.45rem); font-weight: 800; letter-spacing: -.035em; line-height: 1.12; }
+.hero-sub { margin: 0 0 1.1rem 0; font-size: .98rem; line-height: 1.6; opacity: .92; }
+.hero-sub code { background: rgba(255,255,255,.18); color: #fff; padding: .08rem .4rem; border-radius: 6px; font-size: .86em; }
+.chips { display: flex; flex-wrap: wrap; gap: .5rem; }
+.chip { background: rgba(255,255,255,.17); border: 1px solid rgba(255,255,255,.28); backdrop-filter: blur(4px);
+        padding: .28rem .8rem; border-radius: 999px; font-size: .78rem; font-weight: 700; }
+.hero-art { position: relative; z-index: 1; flex-shrink: 0; }
+
+/* ---------- kartu ---------- */
+.card {
+    background: #fff; border: 1px solid #ece9fe; border-radius: 22px;
+    box-shadow: 0 10px 30px rgba(76,29,149,.07); padding: 1.25rem 1.4rem; margin-bottom: 1rem;
+    color: #1e1b4b;
+}
+.card-title { font-size: .98rem; font-weight: 800; letter-spacing: -.01em; margin: 0 0 .85rem 0; display: flex; align-items: center; gap: .5rem; }
+.card-title .bar { width: 4px; height: 1.05rem; border-radius: 4px; background: linear-gradient(180deg,#7c3aed,#db2777); display: inline-block; }
+.muted { color: #6b7280; }
+.note { font-size: .78rem; color: #6b7280; line-height: 1.55; margin: .85rem 0 0 0; }
+
+.section-title { font-size: 1.15rem; font-weight: 800; letter-spacing: -.02em; margin: .3rem 0 .15rem 0; color: #1e1b4b; }
+.section-sub { font-size: .88rem; color: #6b7280; margin: 0 0 .9rem 0; }
+
+/* ---------- hasil klasifikasi ---------- */
+.result { border-top-width: 5px; border-top-style: solid; }
+.result-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.tier-tag { display: inline-block; font-size: .72rem; font-weight: 800; letter-spacing: .04em; padding: .28rem .75rem; border-radius: 999px; margin-bottom: .55rem; }
+.result-title { margin: 0 0 .3rem 0; font-size: 1.5rem; font-weight: 800; letter-spacing: -.03em; line-height: 1.2; }
+.result-copy { margin: 0; font-size: .9rem; line-height: 1.55; color: #5b6478; }
+.spec-panel { display: flex; gap: 1.1rem; align-items: center; margin-top: 1.15rem; padding-top: 1.1rem; border-top: 1px dashed #e5e1fb; }
+.spec-list { flex: 1; min-width: 0; }
+.spec-row { display: flex; justify-content: space-between; gap: .75rem; font-size: .84rem; padding: .22rem 0; }
+.spec-row span:first-child { color: #6b7280; }
+.spec-row b { font-weight: 700; text-align: right; }
+.segments { display: flex; gap: .35rem; margin-top: .65rem; }
+.segments i { flex: 1; height: 7px; border-radius: 99px; background: #e9e5fb; display: block; }
+.segments-cap { font-size: .72rem; font-weight: 700; margin-top: .35rem; }
+
+/* ---------- peluang kelas ---------- */
+.prob-row { margin-bottom: .95rem; padding: .55rem .7rem; border-radius: 14px; border: 1px solid transparent; }
+.prob-row.active { background: #faf8ff; border-color: #ece9fe; }
+.prob-head { display: flex; justify-content: space-between; align-items: center; font-size: .86rem; margin-bottom: .4rem; }
+.prob-head span { display: flex; align-items: center; gap: .45rem; font-weight: 600; }
+.prob-head b { font-weight: 800; font-variant-numeric: tabular-nums; }
+.dot { width: 10px; height: 10px; border-radius: 99px; display: inline-block; }
+.track { height: 9px; border-radius: 99px; background: #eeeafc; overflow: hidden; position: relative; }
+.fill { height: 100%; border-radius: 99px; }
+
+/* ---------- posisi input ---------- */
+.pos-row { margin-bottom: .8rem; }
+.pos-head { display: flex; justify-content: space-between; font-size: .8rem; margin-bottom: .3rem; }
+.pos-head span { color: #6b7280; font-weight: 600; }
+.pos-head b { font-weight: 700; }
+.pos-track { height: 6px; border-radius: 99px; background: linear-gradient(90deg,#ddd6fe,#fbcfe8); position: relative; }
+.pos-dot { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: #fff;
+           border: 3px solid #7c3aed; transform: translate(-50%, -50%); box-shadow: 0 2px 6px rgba(76,29,149,.3); }
+.pos-scale { display: flex; justify-content: space-between; font-size: .68rem; color: #9ca3af; margin-top: .25rem; }
+
+/* ---------- ringkasan massal ---------- */
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .8rem; margin: .4rem 0 1.1rem 0; }
+.stat { background: #fff; border: 1px solid #ece9fe; border-radius: 18px; padding: .95rem 1.05rem; box-shadow: 0 8px 22px rgba(76,29,149,.06); border-top: 4px solid; }
+.stat-n { font-size: 1.7rem; font-weight: 800; letter-spacing: -.03em; line-height: 1.1; }
+.stat-l { font-size: .78rem; font-weight: 700; margin-top: .15rem; }
+.stat-s { font-size: .74rem; color: #6b7280; }
+.stackbar { display: flex; height: 12px; border-radius: 99px; overflow: hidden; background: #eeeafc; margin: .2rem 0 .3rem 0; }
+
+/* ---------- tentang model ---------- */
+.kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem; margin-bottom: 1rem; }
+.kpi { background: linear-gradient(135deg,#ffffff,#f7f3ff); border: 1px solid #ece9fe; border-radius: 18px; padding: 1rem 1.1rem; }
+.kpi-n { font-size: 1.65rem; font-weight: 800; letter-spacing: -.03em; background: linear-gradient(110deg,#4338ca,#db2777); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.kpi-l { font-size: .82rem; font-weight: 700; }
+.kpi-s { font-size: .74rem; color: #6b7280; }
+.imp-row { margin-bottom: 1.05rem; }
+.imp-head { display: flex; justify-content: space-between; align-items: baseline; font-size: .88rem; margin-bottom: .35rem; }
+.imp-head code { background: #f3efff; color: #5b21b6; padding: .06rem .45rem; border-radius: 6px; font-size: .84em; font-weight: 700; }
+.imp-head b { font-weight: 800; }
+.imp-ref { font-size: .73rem; color: #6b7280; margin-top: .3rem; }
+.param-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem .9rem; }
+.param { display: flex; justify-content: space-between; font-size: .84rem; padding: .35rem 0; border-bottom: 1px dashed #ece9fe; }
+.param span { color: #6b7280; }
+.param b { font-weight: 700; }
+.legend-row { display: flex; align-items: flex-start; gap: .6rem; margin-bottom: .65rem; font-size: .86rem; }
+.legend-row small { display: block; color: #6b7280; font-size: .76rem; line-height: 1.4; }
+
+/* ---------- langkah ---------- */
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem; margin-bottom: 1rem; }
+.step { background: #fff; border: 1px solid #ece9fe; border-radius: 18px; padding: .9rem 1rem; font-size: .85rem; line-height: 1.5; }
+.step b { display: block; margin-bottom: .1rem; }
+.step-n { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+          font-size: .78rem; font-weight: 800; color: #fff; background: linear-gradient(135deg,#7c3aed,#db2777); margin-bottom: .45rem; }
+
+.footer { text-align: center; font-size: .78rem; color: #8b8fa3; margin-top: 1.6rem; line-height: 1.6; }
+
+/* ---------- komponen bawaan Streamlit ---------- */
+div[data-testid="stTabs"] > div[role="tablist"] { gap: .4rem; border-bottom: 1px solid #ece9fe; }
+div[data-testid="stTabs"] button[role="tab"] { border-radius: 12px 12px 0 0; padding: .7rem 1.15rem; font-weight: 700; color: #6b7280; }
+div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: #6d28d9; background: rgba(124,58,237,.08); }
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background: linear-gradient(90deg,#7c3aed,#db2777) !important; height: 3px; }
+
+.stButton > button, .stDownloadButton > button {
+    border-radius: 14px; font-weight: 700; border: 1px solid #ddd6fe; background: #fff; color: #5b21b6;
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.stButton > button:hover, .stDownloadButton > button:hover { transform: translateY(-2px); border-color: #a78bfa; color: #6d28d9; box-shadow: 0 10px 22px rgba(124,58,237,.16); }
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] { background: linear-gradient(110deg,#6d28d9,#db2777); color: #fff; border: 0; }
+
+div[data-testid="stVerticalBlockBorderWrapper"] { border-radius: 22px; }
+[data-testid="stSlider"] [role="slider"] { background-color: #7c3aed !important; box-shadow: 0 0 0 4px rgba(124,58,237,.18); }
+[data-testid="stSlider"] [data-testid="stThumbValue"] { color: #6d28d9; font-weight: 800; }
+[data-testid="stFileUploader"] section { border: 2px dashed #c4b5fd; border-radius: 18px; background: rgba(245,243,255,.8); }
+[data-testid="stDataFrame"] { border: 1px solid #ece9fe; border-radius: 16px; overflow: hidden; }
+div[data-testid="stExpander"] { border: 1px solid #ece9fe; border-radius: 16px; background: rgba(255,255,255,.8); }
+
+@media (max-width: 800px) {
+    .hero { flex-direction: column; align-items: flex-start; padding: 1.5rem; }
+    .hero-art { display: none; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .kpi-grid, .steps, .param-grid { grid-template-columns: 1fr; }
+    .result-top, .spec-panel { flex-direction: column; align-items: flex-start; }
+}
+</style>
+"""
+
+
+def inject_styles() -> None:
+    st.markdown(CSS.replace("__FONT__", FONT), unsafe_allow_html=True)
+
+
+# --------------------------------------------------------------------------- #
+# Potongan HTML / SVG
+# --------------------------------------------------------------------------- #
+def html_block(markup: str) -> None:
+    st.html(markup)
+
+
+def hero_html(model: Any, n_features: int) -> str:
+    n_trees = getattr(model, "n_estimators", "-")
+    return f"""
+<div class="hero">
+  <div class="hero-text">
+    <div class="hero-kicker">Proyek UAS · Pengenalan Pola</div>
+    <h1 class="hero-title">Klasifikasi Rentang Harga Ponsel</h1>
+    <p class="hero-sub">Masukkan spesifikasi perangkat keras, lalu model <b>Random Forest</b> memperkirakan
+    ponsel itu masuk ke segmen harga yang mana. Hanya butuh empat fitur:
+    <code>ram</code> <code>battery_power</code> <code>px_width</code> <code>px_height</code></p>
+    <div class="chips">
+      <span class="chip">🌲 {n_trees} pohon</span>
+      <span class="chip">🧩 {n_features} fitur</span>
+      <span class="chip">🏷️ 4 kelas harga</span>
+    </div>
+  </div>
+  <div class="hero-art">
+    <svg width="190" height="150" viewBox="0 0 190 150" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Ilustrasi ponsel">
+      <rect x="58" y="8" width="74" height="134" rx="16" fill="rgba(255,255,255,.14)" stroke="#fff" stroke-opacity=".85" stroke-width="2.2"/>
+      <rect x="65" y="22" width="60" height="106" rx="8" fill="rgba(255,255,255,.12)"/>
+      <line x1="84" y1="15" x2="106" y2="15" stroke="#fff" stroke-opacity=".7" stroke-width="2.4" stroke-linecap="round"/>
+      <rect x="72" y="92" width="9" height="26" rx="3" fill="#5eead4"/>
+      <rect x="85" y="76" width="9" height="42" rx="3" fill="#93c5fd"/>
+      <rect x="98" y="58" width="9" height="60" rx="3" fill="#c4b5fd"/>
+      <rect x="111" y="40" width="9" height="78" rx="3" fill="#fcd34d"/>
+      <circle cx="22" cy="40" r="5" fill="#fff" fill-opacity=".85"/>
+      <circle cx="168" cy="108" r="6" fill="#fff" fill-opacity=".85"/>
+      <path d="M27 40H52M138 108H162" stroke="#fff" stroke-opacity=".5" stroke-width="1.6" stroke-dasharray="3 4"/>
+    </svg>
   </div>
 </div>
-            """
-        )
-
-        st.markdown(
-            f"""
-            - **Algoritma:** Random Forest (`RandomForestClassifier`)
-            - **Jumlah Pohon:** `{getattr(model, "n_estimators", "-")}`
-            - **Fitur Utama ({len(features)}):**
-              1. `ram` (MB)
-              2. `battery_power` (mAh)
-              3. `px_width` (piksel)
-              4. `px_height` (piksel)
-            """
-        )
-
-        st.divider()
-        st.subheader("4 Kelas Target")
-        class_rows = "".join(
-            f"""
-<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:0.87rem; font-family:{FONT_STACK};">
-  <span style="width:9px; height:9px; border-radius:999px; background:{CLASS_STYLES[cls_id]['accent']}; display:inline-block; flex-shrink:0;"></span>
-  <span><b>{cls_id}</b> — {label}</span>
-</div>
-            """
-            for cls_id, label in CLASS_LABELS.items()
-        )
-        st.html(class_rows)
-
-        if hasattr(model, "feature_importances_"):
-            st.divider()
-            st.subheader("Tingkat Pengaruh Fitur")
-            imp_df = pd.DataFrame(
-                {
-                    "Fitur": features,
-                    "Bobot (%)": np.round(model.feature_importances_ * 100, 2),
-                }
-            ).sort_values("Bobot (%)", ascending=False)
-            st.dataframe(imp_df, hide_index=True, width="stretch")
+"""
 
 
-def build_probability_dataframe(model: Any, probabilities: np.ndarray) -> pd.DataFrame:
-    """Create an ordered DataFrame of class probabilities across all 4 target classes."""
-    classes = [int(c) for c in getattr(model, "classes_", [0, 1, 2, 3])]
-    prob_map = dict(zip(classes, probabilities))
+def gauge_svg(confidence: float, color: str) -> str:
+    radius = 34
+    circumference = 2 * np.pi * radius
+    pct = max(0.0, min(100.0, confidence))
+    offset = circumference * (1 - pct / 100)
+    return f"""
+<svg width="96" height="96" viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg" aria-label="Skor keyakinan">
+  <circle cx="48" cy="48" r="{radius}" fill="none" stroke="#eeeafc" stroke-width="8"/>
+  <circle cx="48" cy="48" r="{radius}" fill="none" stroke="{color}" stroke-width="8" stroke-linecap="round"
+          stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}" transform="rotate(-90 48 48)"/>
+  <text x="48" y="48" text-anchor="middle" fill="#1e1b4b" font-size="16" font-weight="800" font-family="{FONT}">{fmt_dec(pct)}%</text>
+  <text x="48" y="62" text-anchor="middle" fill="#6b7280" font-size="7.5" font-weight="700" letter-spacing=".08em" font-family="{FONT}">KEYAKINAN</text>
+</svg>
+"""
 
-    rows = []
-    for cls_id in sorted(CLASS_LABELS.keys()):
-        prob = float(prob_map.get(cls_id, 0.0))
-        rows.append(
-            {
-                "Kelas": f"{cls_id} • {CLASS_LABELS[cls_id]}",
-                "Probabilitas (%)": round(prob * 100, 2),
-            }
-        )
-    return pd.DataFrame(rows)
+
+def phone_svg(pred_class: int, ram: int, battery: int) -> str:
+    c = CLASSES[pred_class]["color"]
+    return f"""
+<svg width="92" height="150" viewBox="0 0 92 150" xmlns="http://www.w3.org/2000/svg" aria-label="Ponsel">
+  <defs>
+    <linearGradient id="scr" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="{c}" stop-opacity=".16"/>
+      <stop offset="1" stop-color="{c}" stop-opacity=".42"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="84" height="142" rx="16" fill="#fff" stroke="#1e1b4b" stroke-opacity=".75" stroke-width="2.2"/>
+  <rect x="10" y="16" width="72" height="118" rx="9" fill="url(#scr)" stroke="{c}" stroke-width="1.2"/>
+  <line x1="34" y1="10" x2="58" y2="10" stroke="#1e1b4b" stroke-opacity=".4" stroke-width="2.4" stroke-linecap="round"/>
+  <text x="46" y="44" text-anchor="middle" fill="{c}" font-size="9.5" font-weight="800" letter-spacing=".06em" font-family="{FONT}">KELAS {pred_class}</text>
+  <line x1="22" y1="54" x2="70" y2="54" stroke="{c}" stroke-opacity=".35"/>
+  <text x="46" y="78" text-anchor="middle" fill="#1e1b4b" font-size="11" font-weight="800" font-family="{FONT}">{fmt_int(ram)}</text>
+  <text x="46" y="89" text-anchor="middle" fill="#6b7280" font-size="7.5" font-weight="700" font-family="{FONT}">MB RAM</text>
+  <text x="46" y="110" text-anchor="middle" fill="#1e1b4b" font-size="11" font-weight="800" font-family="{FONT}">{fmt_int(battery)}</text>
+  <text x="46" y="121" text-anchor="middle" fill="#6b7280" font-size="7.5" font-weight="700" font-family="{FONT}">mAh BATERAI</text>
+</svg>
+"""
 
 
-def render_single_prediction_tab(model: Any, features: list[str]) -> None:
-    """Render Tab 1 for single smartphone price classification."""
-    st.html(
-        f"""
-<div class="section-heading">
-  {svg_icon("sliders")}
-  <h3>Prediksi Satuan</h3>
-</div>
-        """
+def result_card_html(pred_class: int, confidence: float, inputs: dict[str, int]) -> str:
+    c = CLASSES[pred_class]
+    megapixels = inputs["px_width"] * inputs["px_height"] / 1_000_000
+    segments = "".join(
+        f'<i style="background:{c["color"] if i <= pred_class else "#e9e5fb"}"></i>' for i in range(4)
     )
-    st.caption(
-        "Isi 4 spesifikasi ponsel atau pilih salah satu contoh cepat untuk demonstrasi langsung."
-    )
-
-    st.markdown("**Contoh Cepat:**")
-    preset_cols = st.columns(3)
-    for col, (preset_key, preset_data) in zip(preset_cols, PRESETS.items()):
-        with col:
-            st.button(
-                preset_data["button_label"],
-                key=f"btn_preset_{preset_key}",
-                on_click=apply_preset,
-                args=(preset_key,),
-                width="stretch",
-            )
-
-    st.markdown("")
-    col_left, col_right = st.columns(2)
-
-    with col_left:
-        ram = st.number_input(
-            FEATURE_SPECS["ram"]["label"],
-            min_value=FEATURE_SPECS["ram"]["min"],
-            max_value=FEATURE_SPECS["ram"]["max"],
-            step=FEATURE_SPECS["ram"]["step"],
-            key="ram",
-            help=FEATURE_SPECS["ram"]["help"],
-        )
-        px_width = st.number_input(
-            FEATURE_SPECS["px_width"]["label"],
-            min_value=FEATURE_SPECS["px_width"]["min"],
-            max_value=FEATURE_SPECS["px_width"]["max"],
-            step=FEATURE_SPECS["px_width"]["step"],
-            key="px_width",
-            help=FEATURE_SPECS["px_width"]["help"],
-        )
-
-    with col_right:
-        battery_power = st.number_input(
-            FEATURE_SPECS["battery_power"]["label"],
-            min_value=FEATURE_SPECS["battery_power"]["min"],
-            max_value=FEATURE_SPECS["battery_power"]["max"],
-            step=FEATURE_SPECS["battery_power"]["step"],
-            key="battery_power",
-            help=FEATURE_SPECS["battery_power"]["help"],
-        )
-        px_height = st.number_input(
-            FEATURE_SPECS["px_height"]["label"],
-            min_value=FEATURE_SPECS["px_height"]["min"],
-            max_value=FEATURE_SPECS["px_height"]["max"],
-            step=FEATURE_SPECS["px_height"]["step"],
-            key="px_height",
-            help=FEATURE_SPECS["px_height"]["help"],
-        )
-
-    input_df = pd.DataFrame(
-        [
-            {
-                "ram": int(ram),
-                "battery_power": int(battery_power),
-                "px_width": int(px_width),
-                "px_height": int(px_height),
-            }
-        ],
-        columns=features,
-    )
-
-    pred_class = int(model.predict(input_df)[0])
-    pred_probs = model.predict_proba(input_df)[0]
-    classes = [int(c) for c in getattr(model, "classes_", [0, 1, 2, 3])]
-    confidence = float(dict(zip(classes, pred_probs)).get(pred_class, np.max(pred_probs))) * 100
-    style = CLASS_STYLES[pred_class]
-
-    st.divider()
-    st.html(
-        f"""
-<div class="section-heading">
-  {svg_icon("check", style["accent"])}
-  <h3>Hasil Klasifikasi</h3>
-</div>
-        """
-    )
-
-    res_col1, res_col2 = st.columns([1.25, 1.75])
-    with res_col1:
-        st.html(
-            f"""
-<div class="result-panel" style="border-left: 4px solid {style['accent']};">
-  <div class="result-panel-inner">
+    return f"""
+<div class="card result" style="border-top-color:{c['color']};">
+  <div class="result-top">
     <div>
-      <span class="tier-tag" style="background:{style['tint']}; color:{style['accent']};">
-        {style['tag']}
-      </span>
-      <h4 class="result-heading">{CLASS_LABELS[pred_class]}</h4>
-      <p class="result-copy">{CLASS_DESCRIPTIONS[pred_class]}</p>
+      <span class="tier-tag" style="background:{c['tint']};color:{c['color']};">KELAS {pred_class} · {c['name'].upper()}</span>
+      <h3 class="result-title">{c['full']}</h3>
+      <p class="result-copy">{c['desc']}</p>
     </div>
-    <div style="flex-shrink:0;">
-      {svg_confidence_gauge(confidence, style['accent'])}
+    <div style="flex-shrink:0;">{gauge_svg(confidence, c['color'])}</div>
+  </div>
+  <div class="spec-panel">
+    <div style="flex-shrink:0;">{phone_svg(pred_class, inputs['ram'], inputs['battery_power'])}</div>
+    <div class="spec-list">
+      <div class="spec-row"><span>Memori RAM</span><b>{fmt_int(inputs['ram'])} MB ({fmt_dec(inputs['ram'] / 1024, 2)} GB)</b></div>
+      <div class="spec-row"><span>Baterai</span><b>{fmt_int(inputs['battery_power'])} mAh</b></div>
+      <div class="spec-row"><span>Resolusi layar</span><b>{fmt_int(inputs['px_width'])} × {fmt_int(inputs['px_height'])} px</b></div>
+      <div class="spec-row"><span>Total piksel</span><b>{fmt_dec(megapixels, 2)} MP</b></div>
+      <div class="segments">{segments}</div>
+      <div class="segments-cap" style="color:{c['color']};">Segmen harga {pred_class + 1} dari 4</div>
     </div>
   </div>
 </div>
-{svg_phone_spec_blueprint(int(ram), int(battery_power), int(px_width), int(px_height), pred_class)}
-            """
-        )
+"""
 
-    with res_col2:
-        st.html(
-            f"""
-<div class="section-heading">
-  {svg_icon("chart", style["accent"])}
-  <h4>Distribusi Probabilitas Tiap Kelas (%)</h4>
+
+def probability_card_html(probs: np.ndarray, pred_class: int) -> str:
+    rows = ""
+    for cid in range(4):
+        c = CLASSES[cid]
+        pct = float(probs[cid]) * 100
+        active = " active" if cid == pred_class else ""
+        rows += f"""
+<div class="prob-row{active}">
+  <div class="prob-head"><span><i class="dot" style="background:{c['color']}"></i>Kelas {cid} · {c['name']}</span><b>{fmt_dec(pct)}%</b></div>
+  <div class="track"><div class="fill" style="width:{max(pct, 0.6):.2f}%;background:linear-gradient(90deg,{c['color']},{c['color']}aa);"></div></div>
+</div>"""
+    return f"""
+<div class="card">
+  <div class="card-title"><span class="bar"></span>Peluang tiap kelas</div>
+  {rows}
+  <p class="note">Skor keyakinan adalah proporsi pohon dalam hutan yang memilih kelas tersebut. Nilainya
+  menggambarkan keyakinan model, bukan jaminan bahwa prediksi pasti benar.</p>
 </div>
-            """
-        )
-        prob_df = build_probability_dataframe(model, pred_probs)
-        st.bar_chart(
-            prob_df,
-            x="Kelas",
-            y="Probabilitas (%)",
-            color=style["accent"],
-            horizontal=True,
-            sort=False,
-            width="stretch",
-        )
+"""
 
-        with st.expander("Lihat Detail Tabel Probabilitas & Data Input"):
+
+def position_card_html(inputs: dict[str, int]) -> str:
+    rows = ""
+    for key in FEATURE_COLUMNS:
+        s = SPECS[key]
+        pct = (inputs[key] - s["min"]) / (s["max"] - s["min"]) * 100
+        pct = max(2.0, min(98.0, pct))
+        rows += f"""
+<div class="pos-row">
+  <div class="pos-head"><span>{s['label']}</span><b>{fmt_int(inputs[key])} {s['unit']}</b></div>
+  <div class="pos-track"><div class="pos-dot" style="left:{pct:.1f}%"></div></div>
+  <div class="pos-scale"><span>{fmt_int(s['min'])}</span><span>{fmt_int(s['max'])}</span></div>
+</div>"""
+    return f"""
+<div class="card">
+  <div class="card-title"><span class="bar"></span>Posisi input dalam rentang data latih</div>
+  {rows}
+</div>
+"""
+
+
+def stat_cards_html(counts: dict[int, int], total: int) -> str:
+    cards = ""
+    for cid in range(4):
+        c = CLASSES[cid]
+        n = counts.get(cid, 0)
+        share = n / total * 100 if total else 0
+        cards += f"""
+<div class="stat" style="border-top-color:{c['color']}">
+  <div class="stat-n" style="color:{c['color']}">{fmt_int(n)}</div>
+  <div class="stat-l">Kelas {cid} · {c['name']}</div>
+  <div class="stat-s">{fmt_dec(share)}% dari seluruh data</div>
+</div>"""
+    stack = "".join(
+        f'<div style="width:{counts.get(cid, 0) / total * 100:.2f}%;background:{CLASSES[cid]["color"]}"></div>'
+        for cid in range(4) if total and counts.get(cid, 0)
+    )
+    return f'<div class="stat-grid">{cards}</div><div class="stackbar">{stack}</div>'
+
+
+def importance_card_html(model: Any, features: list[str]) -> str:
+    imp = getattr(model, "feature_importances_", None)
+    if imp is None:
+        return ""
+    live = {f: float(v) * 100 for f, v in zip(features, imp)}
+    rows = ""
+    for rank, (feat, val) in enumerate(sorted(live.items(), key=lambda kv: kv[1], reverse=True)):
+        ref = REPORT_IMPORTANCE_20.get(feat)
+        ref_txt = f"Pada model 20 fitur (Tabel 4.3 laporan): {fmt_dec(ref, 2)}%" if ref is not None else ""
+        grad = "linear-gradient(90deg,#6d28d9,#db2777)" if rank == 0 else "linear-gradient(90deg,#a78bfa,#f0abfc)"
+        rows += f"""
+<div class="imp-row">
+  <div class="imp-head"><code>{feat}</code><b>{fmt_dec(val, 2)}%</b></div>
+  <div class="track"><div class="fill" style="width:{val:.2f}%;background:{grad};"></div></div>
+  <div class="imp-ref">{ref_txt}</div>
+</div>"""
+    return f"""
+<div class="card">
+  <div class="card-title"><span class="bar"></span>Bobot fitur model final (4 fitur)</div>
+  {rows}
+  <p class="note">Bobot di atas dihitung dari <b>model final yang dipakai aplikasi</b>, sehingga totalnya 100% di empat
+  fitur. Pada model 20 fitur di laporan, bobot yang sama terbagi ke 20 fitur sehingga angkanya lebih kecil, tetapi
+  <code>ram</code> tetap yang paling berpengaruh. Posisi <code>px_width</code> dan <code>px_height</code> bisa bertukar
+  karena selisihnya tipis. Bobot ini menunjukkan peran relatif menurut model, bukan hubungan sebab-akibat.</p>
+</div>
+"""
+
+
+def model_info_card_html(model: Any) -> str:
+    params = [
+        ("Algoritma", "RandomForestClassifier"),
+        ("Jumlah pohon", getattr(model, "n_estimators", "-")),
+        ("Kedalaman maksimum", getattr(model, "max_depth", "-")),
+        ("min_samples_split", getattr(model, "min_samples_split", "-")),
+        ("min_samples_leaf", getattr(model, "min_samples_leaf", "-")),
+        ("max_features", getattr(model, "max_features", "-")),
+    ]
+    items = "".join(f'<div class="param"><span>{k}</span><b>{v}</b></div>' for k, v in params)
+    return f"""
+<div class="card">
+  <div class="card-title"><span class="bar"></span>Konfigurasi model</div>
+  <div class="param-grid">{items}</div>
+</div>
+"""
+
+
+def legend_card_html() -> str:
+    rows = "".join(
+        f"""<div class="legend-row"><i class="dot" style="background:{c['color']};margin-top:.38rem"></i>
+        <div><b>Kelas {cid} · {c['full']}</b><small>{c['desc']}</small></div></div>"""
+        for cid, c in CLASSES.items()
+    )
+    return f"""
+<div class="card">
+  <div class="card-title"><span class="bar"></span>Arti keempat kelas</div>
+  {rows}
+</div>
+"""
+
+
+def kpi_html() -> str:
+    cards = "".join(
+        f'<div class="kpi"><div class="kpi-n">{n}</div><div class="kpi-l">{l}</div><div class="kpi-s">{s}</div></div>'
+        for n, l, s in REPORT_METRICS
+    )
+    return f"""
+<div class="kpi-grid">{cards}</div>
+<p class="note" style="margin-top:-.3rem;margin-bottom:1rem;">Angka di atas diambil dari laporan dan bersifat eksploratif:
+data uji ikut dipakai untuk memilih jumlah fitur, sehingga hasil pada data baru bisa lebih rendah.</p>
+"""
+
+
+# --------------------------------------------------------------------------- #
+# Tab 1: prediksi satuan
+# --------------------------------------------------------------------------- #
+def render_single_tab(model: Any, features: list[str]) -> None:
+    html_block('<div class="section-title">Atur spesifikasi ponsel</div>'
+               '<p class="section-sub">Geser slider, atau mulai cepat dari salah satu contoh di bawah ini.</p>')
+
+    cols = st.columns(4)
+    for col, (cid, preset) in zip(cols, PRESETS.items()):
+        with col:
+            st.button(preset["label"], key=f"preset_{cid}", on_click=apply_preset, args=(cid,), width="stretch")
+
+    with st.container(border=True):
+        left, right = st.columns(2, gap="large")
+        for col, keys in ((left, ("ram", "px_width")), (right, ("battery_power", "px_height"))):
+            with col:
+                for key in keys:
+                    s = SPECS[key]
+                    st.slider(
+                        f"{s['label']} ({s['unit']})",
+                        min_value=s["min"], max_value=s["max"], step=s["step"],
+                        key=key, help=s["help"],
+                    )
+
+    inputs = {k: int(st.session_state[k]) for k in FEATURE_COLUMNS}
+    input_df = pd.DataFrame([inputs], columns=features)
+    probs = predict_proba_ordered(model, input_df)[0]
+    pred_class = int(np.argmax(probs))
+    confidence = float(probs[pred_class]) * 100
+
+    html_block('<div class="section-title" style="margin-top:.6rem;">Hasil klasifikasi</div>')
+    col_a, col_b = st.columns([1.15, 1], gap="large")
+    with col_a:
+        html_block(result_card_html(pred_class, confidence, inputs))
+        with st.expander("Lihat tabel data input dan probabilitas"):
+            prob_df = pd.DataFrame(
+                {"Kelas": [f"{i} · {CLASSES[i]['full']}" for i in range(4)],
+                 "Probabilitas (%)": np.round(probs * 100, 2)}
+            )
             st.dataframe(prob_df, hide_index=True, width="stretch")
             st.dataframe(input_df, hide_index=True, width="stretch")
+    with col_b:
+        html_block(probability_card_html(probs, pred_class))
+        html_block(position_card_html(inputs))
 
 
-def render_batch_prediction_tab(model: Any, features: list[str]) -> None:
-    """Render Tab 2 for batch CSV upload, validation, prediction, and export."""
-    st.html(
-        f"""
-<div class="section-heading">
-  {svg_icon("table")}
-  <h3>Prediksi Massal (Upload CSV)</h3>
+# --------------------------------------------------------------------------- #
+# Tab 2: prediksi massal
+# --------------------------------------------------------------------------- #
+def sample_template() -> pd.DataFrame:
+    return pd.DataFrame([p["values"] for p in PRESETS.values()], columns=FEATURE_COLUMNS)
+
+
+def render_batch_tab(model: Any, features: list[str]) -> None:
+    html_block("""
+<div class="section-title">Prediksi banyak ponsel sekaligus</div>
+<p class="section-sub">Unggah berkas CSV, aplikasi memeriksa datanya, memprediksi semua baris, lalu menyiapkan hasil untuk diunduh.</p>
+<div class="steps">
+  <div class="step"><span class="step-n">1</span><b>Siapkan CSV</b>Header wajib: <code>ram</code>, <code>battery_power</code>, <code>px_width</code>, <code>px_height</code>.</div>
+  <div class="step"><span class="step-n">2</span><b>Unggah berkas</b>Seret ke kotak di bawah, atau pakai template contoh.</div>
+  <div class="step"><span class="step-n">3</span><b>Unduh hasil</b>Kolom kelas, kategori harga, dan skor keyakinan ditambahkan.</div>
 </div>
-        """
-    )
-    st.caption(
-        "Unggah file `.csv` yang memuat kolom wajib: `ram`, `battery_power`, `px_width`, dan `px_height`."
-    )
+""")
 
-    sample_df = pd.DataFrame(
-        [
-            {"ram": 512, "battery_power": 900, "px_width": 720, "px_height": 480},
-            {"ram": 1536, "battery_power": 1400, "px_width": 1280, "px_height": 720},
-            {"ram": 2048, "battery_power": 1500, "px_width": 1280, "px_height": 720},
-            {"ram": 8192, "battery_power": 5000, "px_width": 2400, "px_height": 1080},
-        ]
-    )
     st.download_button(
-        label="Unduh Contoh Template CSV",
-        data=sample_df.to_csv(index=False).encode("utf-8"),
-        file_name="contoh_data_ponsel.csv",
-        mime="text/csv",
+        "⬇️ Unduh template CSV", data=sample_template().to_csv(index=False).encode("utf-8"),
+        file_name="contoh_data_ponsel.csv", mime="text/csv",
     )
 
-    uploaded_file = st.file_uploader(
-        "Pilih file CSV untuk diprediksi",
-        type=["csv"],
-        help="File CSV harus memiliki header kolom: ram, battery_power, px_width, px_height.",
+    uploaded = st.file_uploader(
+        "Pilih berkas CSV", type=["csv"],
+        help="Kolom lain di berkas Anda dibiarkan apa adanya dan ikut muncul di hasil.",
     )
-
-    if uploaded_file is None:
+    if uploaded is None:
         return
 
     try:
-        df_raw = pd.read_csv(uploaded_file)
-    except Exception as exc:
-        st.error(f"Gagal membaca file CSV: {exc}")
+        df_raw = pd.read_csv(uploaded)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Gagal membaca berkas CSV: {exc}")
         return
-
     if df_raw.empty:
-        st.warning("File CSV yang diunggah tidak memiliki baris data.")
+        st.warning("Berkas CSV tidak memiliki baris data.")
         return
 
-    missing_cols = [col for col in features if col not in df_raw.columns]
-    if missing_cols:
-        st.error(
-            "Kolom wajib berikut tidak ditemukan di file CSV: "
-            + ", ".join(f"`{col}`" for col in missing_cols)
+    col_lookup = {str(c).strip().lower(): c for c in df_raw.columns}
+    missing = [f for f in features if f not in col_lookup]
+    if missing:
+        st.error("Kolom wajib berikut tidak ditemukan: " + ", ".join(f"`{m}`" for m in missing))
+        st.info("Kolom yang terbaca di berkas Anda: " + ", ".join(f"`{c}`" for c in df_raw.columns))
+        return
+
+    df_feat = pd.DataFrame({f: pd.to_numeric(df_raw[col_lookup[f]], errors="coerce") for f in features})
+    bad = df_feat.isna().any(axis=1)
+    if bad.any():
+        st.error(f"Ada {int(bad.sum())} baris dengan nilai kosong atau bukan angka. Perbaiki dulu, lalu unggah ulang.")
+        st.dataframe(df_raw.loc[bad], width="stretch")
+        return
+
+    out_of_range = pd.Series(False, index=df_feat.index)
+    for f in features:
+        if f in SPECS:
+            out_of_range |= (df_feat[f] < SPECS[f]["min"]) | (df_feat[f] > SPECS[f]["max"])
+    if out_of_range.any():
+        st.warning(
+            f"{int(out_of_range.sum())} baris punya nilai di luar rentang data latih "
+            "(ram 256-4.000, baterai 500-2.000, lebar 500-2.000, tinggi 0-2.000). "
+            "Hasil prediksinya tetap dihitung, tetapi kurang bisa diandalkan."
         )
-        st.info("Kolom yang terdeteksi pada file Anda: " + ", ".join(f"`{c}`" for c in df_raw.columns))
-        return
 
-    df_features = df_raw[features].copy()
-    for col in features:
-        df_features[col] = pd.to_numeric(df_features[col], errors="coerce")
+    probs = predict_proba_ordered(model, df_feat[features])
+    preds = probs.argmax(axis=1)
+    conf = probs.max(axis=1) * 100
 
-    invalid_rows = df_features.isna().any(axis=1)
-    if invalid_rows.any():
-        invalid_count = int(invalid_rows.sum())
-        st.error(
-            f"Terdapat {invalid_count} baris dengan nilai kosong atau bukan angka pada kolom fitur. "
-            "Harap perbaiki data terlebih dahulu."
-        )
-        st.dataframe(df_raw.loc[invalid_rows], width="stretch")
-        return
+    df_out = df_raw.copy()
+    df_out["prediksi_kelas"] = preds.astype(int)
+    df_out["kategori_harga"] = [CLASSES[int(p)]["full"] for p in preds]
+    df_out["skor_kepercayaan (%)"] = np.round(conf, 2)
 
-    preds = model.predict(df_features)
-    probs = model.predict_proba(df_features)
-    confidence_scores = np.max(probs, axis=1) * 100
+    st.success(f"Berhasil memprediksi {len(df_out)} data ponsel.")
+    counts = {cid: int((preds == cid).sum()) for cid in range(4)}
+    html_block(stat_cards_html(counts, len(df_out)))
 
-    df_result = df_raw.copy()
-    df_result["prediksi_kelas"] = [int(p) for p in preds]
-    df_result["kategori_harga"] = [CLASS_LABELS[int(p)] for p in preds]
-    df_result["skor_kepercayaan (%)"] = np.round(confidence_scores, 2)
-
-    st.success(f"Berhasil memprediksi **{len(df_result)}** data ponsel.")
-
-    summary_counts = df_result["kategori_harga"].value_counts()
-    metric_cols = st.columns(4)
-    for col, cls_id in zip(metric_cols, sorted(CLASS_LABELS.keys())):
-        label = CLASS_LABELS[cls_id]
-        col.metric(label=f"Kelas {cls_id}", value=int(summary_counts.get(label, 0)), help=label)
-
-    st.markdown("**Pratinjau Hasil Prediksi:**")
-    st.dataframe(df_result, width="stretch")
-
-    csv_output = df_result.to_csv(index=False).encode("utf-8")
+    st.markdown("**Pratinjau hasil prediksi**")
+    st.dataframe(
+        df_out, width="stretch", hide_index=True,
+        column_config={
+            "skor_kepercayaan (%)": st.column_config.ProgressColumn(
+                "Keyakinan", min_value=0, max_value=100, format="%.1f%%"),
+        },
+    )
     st.download_button(
-        label="Unduh Hasil Prediksi (CSV)",
-        data=csv_output,
-        file_name="hasil_prediksi_harga_ponsel.csv",
-        mime="text/csv",
-        type="primary",
+        "⬇️ Unduh hasil prediksi (CSV)", data=df_out.to_csv(index=False).encode("utf-8"),
+        file_name="hasil_prediksi_harga_ponsel.csv", mime="text/csv", type="primary",
     )
 
 
+# --------------------------------------------------------------------------- #
+# Tab 3: tentang model
+# --------------------------------------------------------------------------- #
+def render_about_tab(model: Any, features: list[str]) -> None:
+    html_block('<div class="section-title">Tentang model</div>'
+               '<p class="section-sub">Ringkasan model yang dipakai aplikasi ini, dibaca langsung dari berkas model.</p>')
+    html_block(kpi_html())
+    left, right = st.columns([1.1, 1], gap="large")
+    with left:
+        html_block(importance_card_html(model, features))
+    with right:
+        html_block(model_info_card_html(model))
+        html_block(legend_card_html())
+    html_block("""
+<div class="card">
+  <div class="card-title"><span class="bar"></span>Catatan penggunaan</div>
+  <p class="note" style="margin-top:0;">Hasil klasifikasi hanyalah perkiraan segmen harga berdasarkan model dan dataset
+  Mobile Price Classification, bukan harga aktual di pasaran. Dataset tidak memuat merek maupun tahun rilis, dan
+  aplikasi hanya memakai empat fitur. Gunakan nilai di dalam rentang data latih supaya hasilnya masuk akal.</p>
+</div>
+""")
+
+
+# --------------------------------------------------------------------------- #
+# Main
+# --------------------------------------------------------------------------- #
 def main() -> None:
-    """Entry point for the Streamlit application."""
-    st.set_page_config(
-        page_title="Klasifikasi Rentang Harga Ponsel",
-        page_icon="📱",
-        layout="wide",
-    )
-
-    inject_theme_styles()
+    st.set_page_config(page_title="Klasifikasi Harga Ponsel", page_icon="📱", layout="wide")
+    inject_styles()
     init_session_state()
 
     try:
-        model, features = load_model_bundle(MODEL_PATH)
-    except Exception as exc:
+        model, features = load_model_bundle()
+    except Exception as exc:  # noqa: BLE001
         st.error(f"Gagal memuat model: {exc}")
         st.stop()
 
-    render_sidebar(model, features)
-    st.html(svg_header_schematic())
+    html_block(hero_html(model, len(features)))
 
-    tab_single, tab_batch = st.tabs(["Prediksi Satuan", "Prediksi Massal (Upload CSV)"])
-
+    tab_single, tab_batch, tab_about = st.tabs(["📱 Prediksi satuan", "📂 Prediksi massal", "📊 Tentang model"])
     with tab_single:
-        render_single_prediction_tab(model, features)
-
+        render_single_tab(model, features)
     with tab_batch:
-        render_batch_prediction_tab(model, features)
+        render_batch_tab(model, features)
+    with tab_about:
+        render_about_tab(model, features)
+
+    html_block('<div class="footer">Proyek UAS Pengenalan Pola · Kelompok 3<br>'
+               'Departemen Sistem Komputer, Fakultas Ilmu Komputer, Universitas Sriwijaya</div>')
 
 
 if __name__ == "__main__":
